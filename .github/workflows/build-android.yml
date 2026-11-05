@@ -16,11 +16,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Unpack project from noomi.zip
+      - name: Locate project
         run: |
           ls -la
-          unzip -q noomi.zip -d work
-          ls -la work/noomi
+          if [ -f project.godot ]; then P=.
+          elif [ -f noomi/project.godot ]; then P=noomi
+          elif [ -f noomi.zip ]; then unzip -q noomi.zip -d work; P=work/noomi
+          else echo "project.godot not found"; find . -maxdepth 3 -not -path './.git/*' | head -50; exit 1
+          fi
+          echo "PROJECT=$P" >> $GITHUB_ENV
+          echo "Using project at $P"; ls -la $P
 
       - uses: actions/setup-java@v5
         with:
@@ -59,11 +64,11 @@ jobs:
           cat $S
 
       - name: Import project
-        working-directory: work/noomi
+        working-directory: ${{ env.PROJECT }}
         run: godot --headless --path . --import || true
 
       - name: Export debug APK
-        working-directory: work/noomi
+        working-directory: ${{ env.PROJECT }}
         run: |
           mkdir -p build
           godot --headless --path . --export-debug "Android" build/noomi-debug.apk
@@ -72,11 +77,11 @@ jobs:
       - uses: actions/upload-artifact@v5
         with:
           name: noomi-debug-apk
-          path: work/noomi/build/noomi-debug.apk
+          path: ${{ env.PROJECT }}/build/noomi-debug.apk
 
       - name: Publish APK as a GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest-build --cleanup-tag --yes || true
-          gh release create latest-build work/noomi/build/noomi-debug.apk --title "Noomi debug build" --notes "Debug APK built from ${{ github.sha }}" --prerelease
+          gh release create latest-build ${{ env.PROJECT }}/build/noomi-debug.apk --title "Noomi debug build" --notes "Debug APK built from ${{ github.sha }}" --prerelease
