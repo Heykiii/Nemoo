@@ -1,0 +1,63 @@
+name: Play in browser (GitHub Pages)
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.3"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Locate project
+        run: |
+          if [ -f project.godot ]; then P=.
+          elif [ -f noomi/project.godot ]; then P=noomi
+          elif [ -f noomi.zip ]; then unzip -q noomi.zip -d work; P=work/noomi
+          else echo "project.godot not found"; exit 1
+          fi
+          echo "PROJECT=$P" >> $GITHUB_ENV
+
+      - name: Install Godot and export templates
+        run: |
+          BASE=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
+          wget -q $BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip
+          wget -q $BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz
+          unzip -q Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip
+          sudo mv Godot_v${GODOT_VERSION}-stable_linux.x86_64 /usr/local/bin/godot
+          mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          unzip -q Godot_v${GODOT_VERSION}-stable_export_templates.tpz -d tpl
+          mv tpl/templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+
+      - name: Export Web build
+        working-directory: ${{ env.PROJECT }}
+        run: |
+          godot --headless --path . --import || true
+          mkdir -p build/web
+          godot --headless --path . --export-release "Web" build/web/index.html
+          ls -l build/web
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ env.PROJECT }}/build/web
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -19,6 +19,8 @@ var regrabs := 0
 var max_flips := 0
 var max_twist := 0
 var trick_total := 0
+## Character perk (Astronaut): flights with 2+ flips score this many times more.
+var multi_flip_mult := 1.0
 
 func multiplier() -> float:
 	return minf(1.0 + MULT_STEP * float(maxi(combo - 1, 0)), MULT_CAP)
@@ -76,6 +78,8 @@ func bank_flight(summary: Dictionary, how: String) -> Dictionary:
 		if flips > 0 and halves > 0:
 			pts *= 1.25
 		pts += float(summary["airtime"]) * AIRTIME_PER_SEC
+		if flips >= 2:
+			pts *= multi_flip_mult
 		pts *= multiplier()
 		res["trick"] = trick_name(flips, dir, halves)
 		res["desc"] = trick_desc(flips, dir, halves)

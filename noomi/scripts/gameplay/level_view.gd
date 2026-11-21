@@ -59,6 +59,10 @@ func _draw() -> void:
 		if player != null and player.near_bar == i:
 			var pulse := 0.6 + 0.4 * sin(time * 10.0)
 			draw_arc(b, 34.0, 0.0, TAU, 40, Color(GOLD.r, GOLD.g, GOLD.b, pulse), 5.0)
+	if player != null and player.perk_preview and player.is_hanging():
+		var pts: Array = player.predict_path()
+		for k in pts.size():
+			draw_circle(pts[k], 5.0 - 3.0 * float(k) / float(maxi(pts.size(), 1)), Color(0.3, 0.9, 0.8, 0.8 - 0.5 * float(k) / float(maxi(pts.size(), 1))))
 	if player != null and player.gust_vis > 0.0:
 		var gd: float = float(player.gust_dir_vis)
 		var phase: float = 0.7 - player.gust_vis

@@ -20,6 +20,17 @@ const ACHIEVEMENTS := {
 }
 
 const CharacterData := preload("res://scripts/core/character_data.gd")
+const CharacterStats := preload("res://scripts/core/character_stats.gd")
+const ExerciseData := preload("res://scripts/core/exercise_data.gd")
+
+const FEVER_DAYS := 3
+const FEVER_MULT := 1.5
+const CHALK_BOX_COINS := 50
+
+## Tests set this ("YYYY-MM-DD") to fake the date.
+var date_override := ""
+## Coins paid out by the most recent record_level / record_rush call.
+var last_coins := 0
 
 var data: Dictionary = {}
 
@@ -42,6 +53,10 @@ func default_data() -> Dictionary:
 		"clean_streak": 0,
 		"speed": 1,
 		"story_seen": {},
+		"owned": {"gymnast": true},
+		"chill_character": 0,
+		"exercise": {"claims": {}, "streak": 0, "last_day": ""},
+		"chalk_day": "",
 	}
 
 func load_data() -> void:
@@ -67,6 +82,24 @@ func _sanitize(raw: Dictionary) -> Dictionary:
 	d["clean_total"] = maxi(int(raw.get("clean_total", 0)), 0)
 	d["clean_streak"] = maxi(int(raw.get("clean_streak", 0)), 0)
 	d["speed"] = clampi(int(raw.get("speed", 1)), 0, SPEED_SCALES.size() - 1)
+	var ow = raw.get("owned", {})
+	if typeof(ow) == TYPE_DICTIONARY:
+		for k in ow:
+			if bool(ow[k]) and CharacterStats.STATS.has(str(k)):
+				d["owned"][str(k)] = true
+	# The selected character must be one the player owns.
+	if not d["owned"].has(str(CharacterData.LIST[int(d["character"])]["id"])):
+		d["character"] = 0
+	d["chill_character"] = clampi(int(raw.get("chill_character", 0)), 0, CharacterData.LIST.size() - 1)
+	d["chalk_day"] = str(raw.get("chalk_day", ""))
+	var ex = raw.get("exercise", {})
+	if typeof(ex) == TYPE_DICTIONARY:
+		d["exercise"]["streak"] = maxi(int(ex.get("streak", 0)), 0)
+		d["exercise"]["last_day"] = str(ex.get("last_day", ""))
+		var cl = ex.get("claims", {})
+		if typeof(cl) == TYPE_DICTIONARY:
+			for k in cl:
+				d["exercise"]["claims"][str(k)] = str(cl[k])
 	var ss = raw.get("story_seen", {})
 	if typeof(ss) == TYPE_DICTIONARY:
 		for k in ss:
@@ -115,11 +148,109 @@ func toggle_setting(key: String) -> void:
 func character_palette() -> Dictionary:
 	return CharacterData.LIST[int(data["character"])]
 
+func character_id() -> String:
+	return str(CharacterData.LIST[int(data["character"])]["id"])
+
+## Character used in a given mode. Chill Mode lets you play ANY hero for free.
+func palette_for_mode(mode: String) -> Dictionary:
+	if mode == "chill":
+		return CharacterData.LIST[int(data["chill_character"])]
+	return character_palette()
+
+func is_owned(id: String) -> bool:
+	return data["owned"].has(id)
+
+## Spends coins and unlocks the hero. Returns false if already owned or too poor.
+func buy_character(id: String) -> bool:
+	if is_owned(id) or not CharacterStats.STATS.has(id):
+		return false
+	var c := CharacterStats.cost(id)
+	if int(data["coins"]) < c:
+		return false
+	data["coins"] = int(data["coins"]) - c
+	data["owned"][id] = true
+	save()
+	return true
+
+func select_character(idx: int) -> bool:
+	var id := str(CharacterData.LIST[idx]["id"])
+	if not is_owned(id):
+		return false
+	data["character"] = idx
+	save()
+	return true
+
+# ---------------------------------------------------------------- dates, streak, coins
+func today() -> String:
+	if date_override != "":
+		return date_override
+	var bias := int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+	return Time.get_date_string_from_unix_time(int(Time.get_unix_time_from_system()) + bias)
+
+func _day_before(day: String) -> String:
+	var t := Time.get_unix_time_from_datetime_string(day + "T12:00:00")
+	return Time.get_date_string_from_unix_time(int(t) - 86400)
+
+func streak() -> int:
+	var ex: Dictionary = data["exercise"]
+	var last := str(ex["last_day"])
+	if last == today() or last == _day_before(today()):
+		return int(ex["streak"])
+	return 0
+
+## "Gold Chalk Fever": 3+ days in a row of training -> x1.5 on exercise and level coins.
+func fever_active() -> bool:
+	return streak() >= FEVER_DAYS
+
+func coin_mult(char_id: String = "") -> float:
+	var id := char_id if char_id != "" else character_id()
+	var m := CharacterStats.mult(id, "coins")
+	if fever_active():
+		m *= FEVER_MULT
+	return m
+
+func add_coins(n: int) -> void:
+	data["coins"] = maxi(int(data["coins"]) + n, 0)
+	save()
+
+func exercise_done_today(ex_id: String) -> bool:
+	return str(data["exercise"]["claims"].get(ex_id, "")) == today()
+
+## Pays the exercise reward once per exercise per day. Returns coins paid (0 if already claimed).
+func claim_exercise(ex_id: String) -> int:
+	if exercise_done_today(ex_id):
+		return 0
+	var def: Dictionary = ExerciseData.get_def(ex_id)
+	if def.is_empty():
+		return 0
+	var ex: Dictionary = data["exercise"]
+	var t := today()
+	if str(ex["last_day"]) != t:
+		ex["streak"] = (int(ex["streak"]) + 1) if str(ex["last_day"]) == _day_before(t) else 1
+		ex["last_day"] = t
+	var pay := int(roundf(float(def["coins"]) * (FEVER_MULT if fever_active() else 1.0)))
+	ex["claims"][ex_id] = t
+	data["coins"] = int(data["coins"]) + pay
+	save()
+	return pay
+
+func chalk_box_ready() -> bool:
+	return str(data["chalk_day"]) != today()
+
+func open_chalk_box() -> int:
+	if not chalk_box_ready():
+		return 0
+	data["chalk_day"] = today()
+	data["coins"] = int(data["coins"]) + CHALK_BOX_COINS
+	save()
+	return CHALK_BOX_COINS
+
 func level_entry(idx: int) -> Dictionary:
 	return data["levels"].get(str(idx), {"score": 0, "stars": 0})
 
 ## Returns true when score beats the previous best.
 func record_level(idx: int, score: int, stars: int, completed: bool) -> bool:
+	last_coins = 0
 	var e: Dictionary = level_entry(idx).duplicate()
 	var new_best := score > int(e["score"])
 	if new_best:
@@ -128,7 +259,8 @@ func record_level(idx: int, score: int, stars: int, completed: bool) -> bool:
 	data["levels"][str(idx)] = e
 	if completed:
 		data["unlocked"] = maxi(int(data["unlocked"]), mini(idx + 2, LEVEL_COUNT))
-		data["coins"] = int(data["coins"]) + 10 + stars * 5
+		last_coins = int(roundf(float(10 + stars * 5) * coin_mult()))
+		data["coins"] = int(data["coins"]) + last_coins
 	save()
 	return new_best
 
@@ -136,7 +268,8 @@ func record_rush(score: int) -> bool:
 	var nb := score > int(data["rush_best"])
 	if nb:
 		data["rush_best"] = score
-	data["coins"] = int(data["coins"]) + score / 100
+	last_coins = int(roundf(float(score / 100) * coin_mult()))
+	data["coins"] = int(data["coins"]) + last_coins
 	save()
 	return nb
 

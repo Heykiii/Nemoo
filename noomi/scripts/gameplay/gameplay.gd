@@ -11,6 +11,8 @@ const Skyline := preload("res://scripts/gameplay/skyline.gd")
 const HoldButton := preload("res://scripts/ui/hold_button.gd")
 const LevelData := preload("res://scripts/core/level_data.gd")
 const UI := preload("res://scripts/core/ui_util.gd")
+const CharacterStats := preload("res://scripts/core/character_stats.gd")
+const CharacterData := preload("res://scripts/core/character_data.gd")
 
 const RUSH_TIME := 60.0
 ## Extra slow-down while airborne ("focus time") so there is time to press FLIP / TUCK / EXTEND.
@@ -51,6 +53,7 @@ var popup_label: Label
 var hint_label: Label
 var chapter_label: Label
 var grab_btn
+var ability_btn
 var hold_buttons: Array = []
 var overlay: CanvasLayer = null
 var popup_tween: Tween
@@ -111,9 +114,10 @@ func _build_world() -> void:
 	player = PlayerScript.new()
 	add_child(player)
 	player.setup(level)
-	player.palette = SaveManager.character_palette()
+	_apply_character(SaveManager.palette_for_mode(mode))
 	player.difficulty = _difficulty()
 	player.gust.connect(_on_gust)
+	player.ability_used.connect(_on_ability)
 	view.setup(level, player)
 	player.grabbed.connect(_on_grabbed)
 	player.released.connect(_on_released)
@@ -126,6 +130,25 @@ func _build_world() -> void:
 	add_child(camera)
 	camera.global_position = player.global_position
 	camera.make_current()
+
+func _apply_character(pal: Dictionary) -> void:
+	player.palette = pal
+	player.set_character(str(pal["id"]))
+	if score != null:
+		score.multi_flip_mult = player.perk_multi_flip
+
+func _use_ability() -> void:
+	if run_over or respawn_pending or get_tree().paused:
+		return
+	player.activate_ability()
+
+func _on_ability(id: String) -> void:
+	popup(String(CharacterStats.of(player.char_id)["ability_name"]) + "!", UI.CYAN)
+	AudioManager.play("trick")
+	_shake(2.0)
+	if id == "honk":
+		score.score += 150
+		_refresh_hud()
 
 func _place(c: Control, ax: float, ay: float, l: float, t: float, r: float, b: float) -> void:
 	c.anchor_left = ax
@@ -237,6 +260,9 @@ func _build_hud() -> void:
 	_hold("TUCK", "tuck", UI.LAV.darkened(0.3), 1.0, -450, -302, -310, -180)
 	_hold("EXTEND", "extend", UI.LAV.darkened(0.3), 1.0, -300, -302, -160, -180)
 	_hold("TWIST", "twist", UI.PINK.darkened(0.2), 1.0, -150, -302, -10, -180)
+	ability_btn = _hold("", "", UI.CYAN.darkened(0.3), 0.0, 0, -290, 340, -166)
+	ability_btn.font_size = 22
+	ability_btn.down.connect(_use_ability)
 	timer_label.visible = mode == "rush"
 	score_label.visible = mode != "chill"
 	combo_label.visible = mode != "chill"
@@ -244,6 +270,7 @@ func _build_hud() -> void:
 # ------------------------------------------------------------ run control
 func _start_run() -> void:
 	score = ScoreManager.new()
+	score.multi_flip_mult = player.perk_multi_flip
 	run_over = false
 	respawn_pending = false
 	time_left = RUSH_TIME
@@ -303,9 +330,20 @@ func _process(delta: float) -> void:
 		var target := SaveManager.speed_scale()
 		if player.is_airborne():
 			target *= AIR_FOCUS
+		if player.slowmo_t > 0.0:
+			target *= 0.5
 		var real_delta := delta / maxf(Engine.time_scale, 0.1)
 		Engine.time_scale = move_toward(Engine.time_scale, target, 2.5 * real_delta)
 	skyline.queue_redraw()
+	var ab: Dictionary = CharacterStats.of(player.char_id)
+	if player.can_use_ability():
+		ability_btn.set_label(String(ab["ability_name"]).to_upper())
+		ability_btn.set_color(UI.GOLD.darkened(0.15))
+		ability_btn.set_highlight(true)
+	else:
+		ability_btn.set_label(String(ab["ability_name"]).to_upper() + (" (in air)" if player.ability_ready else " - used"))
+		ability_btn.set_color(Color(0.35, 0.35, 0.5))
+		ability_btn.set_highlight(false)
 	grab_btn.set_label("RELEASE" if player.is_hanging() else "GRAB")
 	grab_btn.set_highlight(player.near_bar != -1 and player.is_airborne())
 	if player.is_airborne():
@@ -338,6 +376,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("grab"):
 		player.queue_grab()
+	elif event.is_action_pressed("ability"):
+		_use_ability()
 	elif event.is_action_pressed("restart"):
 		_quick_restart()
 
@@ -520,6 +560,7 @@ func _finish_campaign(result: String, info: Dictionary) -> void:
 		"best_combo": score.best_combo, "new_best": new_best,
 		"personal_best": int(SaveManager.level_entry(level_index)["score"]),
 		"stars": stars, "completed": completed, "reason": reason,
+		"coins": SaveManager.last_coins if completed else 0, "fever": SaveManager.fever_active(),
 		"has_next": completed and level_index + 1 < SaveManager.LEVEL_COUNT,
 	})
 
@@ -534,6 +575,7 @@ func _finish_rush() -> void:
 		"best_combo": score.best_combo, "new_best": new_best,
 		"personal_best": int(SaveManager.data["rush_best"]),
 		"stars": 0, "completed": true, "reason": "Time's up!", "has_next": false,
+		"coins": SaveManager.last_coins, "fever": SaveManager.fever_active(),
 	})
 
 # ------------------------------------------------------------ pause / overlay
@@ -547,11 +589,24 @@ func _open_pause() -> void:
 	if overlay != null:
 		return
 	var sound := "Sound: ON" if SaveManager.setting("sound") else "Sound: OFF"
-	_show_overlay("Paused", [["Resume", _close_overlay], ["Restart", _confirm_restart], ["Speed: " + SaveManager.speed_name(), _cycle_speed], [sound, _toggle_sound], ["Main menu", _exit]])
+	var items := [["Resume", _close_overlay], ["Restart", _confirm_restart], ["Speed: " + SaveManager.speed_name(), _cycle_speed], [sound, _toggle_sound], ["Main menu", _exit]]
+	if mode == "chill":
+		var nm := String(CharacterData.LIST[int(SaveManager.data["chill_character"])]["name"])
+		items.insert(2, ["Hero: " + nm + " (all free)", _cycle_chill_hero])
+	_show_overlay("Paused", items)
 
 func _cycle_speed() -> void:
 	SaveManager.cycle_speed()
 	_close_overlay()
+	_open_pause()
+
+## Chill Mode: every hero is free to try. Does not unlock anything.
+func _cycle_chill_hero() -> void:
+	SaveManager.data["chill_character"] = (int(SaveManager.data["chill_character"]) + 1) % CharacterData.LIST.size()
+	SaveManager.save()
+	_apply_character(SaveManager.palette_for_mode("chill"))
+	_close_overlay()
+	_start_run()
 	_open_pause()
 
 func _toggle_sound() -> void:

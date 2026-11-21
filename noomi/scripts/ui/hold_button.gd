@@ -9,6 +9,7 @@ var label := ""
 var color := Color("7b4dff")
 var action := ""
 var highlight := false
+var font_size := 26
 var pressed := false
 var _touches := {}
 var _mouse := false
@@ -19,6 +20,11 @@ func _ready() -> void:
 func set_label(t: String) -> void:
 	if t != label:
 		label = t
+		queue_redraw()
+
+func set_color(c: Color) -> void:
+	if c != color:
+		color = c
 		queue_redraw()
 
 func set_highlight(v: bool) -> void:
@@ -78,6 +84,6 @@ func _draw() -> void:
 		sb.set_border_width_all(6)
 	draw_style_box(sb, Rect2(Vector2.ZERO, size))
 	var font := ThemeDB.fallback_font
-	var fs := 26
+	var fs := font_size
 	var ts := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, fs)
 	draw_string(font, Vector2((size.x - ts.x) / 2.0, (size.y - ts.y) / 2.0 + font.get_ascent(fs)), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
