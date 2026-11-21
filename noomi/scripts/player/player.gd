@@ -12,8 +12,10 @@ signal landed(result: String, info: Dictionary)
 
 const Art := preload("res://scripts/player/player_art.gd")
 const CharacterData := preload("res://scripts/core/character_data.gd")
+const CharacterStats := preload("res://scripts/core/character_stats.gd")
 
 signal gust(direction: int)
+signal ability_used(id: String)
 
 enum State { HANG, AIR, LANDED, FALLEN }
 
@@ -95,6 +97,24 @@ var gust_dir_vis := 1
 var _gust_time := -1.0
 var _gust_dir := 1
 
+# Character specialist (set by set_character). Neutral values = baseline gymnast.
+var char_id := "gymnast"
+var ability_id := "float"
+var ability_ready := true
+var perk_grab := 1.0
+var perk_pump := 1.0
+var perk_spin := 1.0
+var perk_land := 1.0
+var perk_swing := 1.0
+var perk_preview := false
+var perk_multi_flip := 1.0
+var perk_coins := 1.0
+var float_t := 0.0
+var float_g := 1.0
+var level_t := 0.0
+var slowmo_t := 0.0
+var hook_t := 0.0
+
 var _head := Vector2.ZERO
 var _feet := Vector2.ZERO
 var _prev_low_y := 0.0
@@ -122,6 +142,11 @@ func setup(level: Dictionary) -> void:
 	reset(0)
 
 func reset(bar_i: int = 0) -> void:
+	ability_ready = true
+	float_t = 0.0
+	level_t = 0.0
+	slowmo_t = 0.0
+	hook_t = 0.0
 	bar_index = clampi(bar_i, 0, maxi(bars.size() - 1, 0))
 	last_released_bar = -1
 	state = State.HANG
@@ -154,6 +179,73 @@ func reset(bar_i: int = 0) -> void:
 	_prev_low_y = maxf(_head.y, _feet.y)
 	_apply_visual()
 	queue_redraw()
+
+func set_character(id: String) -> void:
+	char_id = id
+	var st := CharacterStats.of(id)
+	ability_id = String(st["ability"])
+	perk_grab = CharacterStats.mult(id, "grab_range")
+	perk_pump = CharacterStats.mult(id, "pump")
+	perk_spin = CharacterStats.mult(id, "air_spin")
+	perk_land = CharacterStats.mult(id, "land_angle")
+	perk_swing = CharacterStats.mult(id, "swing_max")
+	perk_multi_flip = CharacterStats.mult(id, "multi_flip")
+	perk_coins = CharacterStats.mult(id, "coins")
+	perk_preview = CharacterStats.flag(id, "preview")
+	ability_ready = true
+
+func can_use_ability() -> bool:
+	return state == State.AIR and ability_ready
+
+func activate_ability() -> bool:
+	if not can_use_ability():
+		return false
+	ability_ready = false
+	var dir := 1.0 if vel.x >= 0.0 else -1.0
+	match ability_id:
+		"float":
+			float_t = 1.0
+			float_g = 0.5
+		"zerog":
+			float_t = 2.0
+			float_g = 0.15
+		"carpet":
+			float_t = 1.5
+			float_g = 0.3
+			slowmo_t = 1.5
+		"slowmo":
+			slowmo_t = 1.5
+		"dash":
+			vel.x += dir * 380.0
+		"leap":
+			vel.y -= 380.0
+		"extra_flip":
+			var d := -1.0 if (flip_accum < 0.0 or (flip_accum == 0.0 and rot_vel < 0.0)) else 1.0
+			rot += d * TAU
+			flip_accum += d * TAU
+		"stabilize":
+			rot_vel = 0.0
+		"autolevel":
+			level_t = 1.0
+		"hook":
+			hook_t = 99.0
+		"honk":
+			pass
+	ability_used.emit(ability_id)
+	return true
+
+## Dots showing where a release right now would go (Scientist perk).
+func predict_path(steps: int = 22, dt: float = 0.05) -> Array:
+	var out: Array = []
+	if state != State.HANG:
+		return out
+	var p := position
+	var v := Vector2(cos(theta), -sin(theta)) * omega * hang_length
+	for i in steps:
+		v.y += gravity * dt
+		p += v * dt
+		out.append(p)
+	return out
 
 func queue_grab() -> void:
 	grab_queued = true
@@ -216,10 +308,10 @@ func _tick_hang(delta: float) -> void:
 		var dir := signf(omega) if absf(omega) > 0.05 else -signf(theta)
 		if dir == 0.0:
 			dir = 1.0
-		acc += pump_accel * dir
+		acc += pump_accel * perk_pump * dir
 	if Input.is_action_just_pressed("pump"):
 		AudioManager.play("swing")
-	omega = clampf(omega + acc * delta, -max_swing_speed, max_swing_speed)
+	omega = clampf(omega + acc * delta, -max_swing_speed * perk_swing, max_swing_speed * perk_swing)
 	theta = wrapf(theta + omega * delta, -PI, PI)
 	cur_len = move_toward(cur_len, hang_length, 500.0 * delta)
 	position = bar + Vector2(sin(theta), cos(theta)) * cur_len
@@ -237,6 +329,10 @@ func _release() -> void:
 	_gust_time = randf_range(0.25, 0.75) if randf() < gust_chance else -1.0
 	_gust_dir = 1 if randf() < 0.5 else -1
 	var speed := vel.length()
+	ability_ready = true
+	float_t = 0.0
+	level_t = 0.0
+	hook_t = 0.0
 	state = State.AIR
 	last_released_bar = bar_index
 	cooldown = regrab_delay
@@ -260,8 +356,9 @@ func _grab(i: int) -> void:
 		rel = Vector2(0, 1)
 		dist = 1.0
 	theta = atan2(rel.x, rel.y)
+	hook_t = 0.0
 	var tangent := Vector2(cos(theta), -sin(theta))
-	omega = clampf(vel.dot(tangent) / hang_length, -max_swing_speed, max_swing_speed)
+	omega = clampf(vel.dot(tangent) / hang_length, -max_swing_speed * perk_swing, max_swing_speed * perk_swing)
 	cur_len = clampf(dist, 30.0, hang_length + grab_range)
 	bar_index = i
 	state = State.HANG
@@ -276,7 +373,13 @@ func _grab(i: int) -> void:
 func _tick_air(delta: float) -> void:
 	airtime += delta
 	cooldown = maxf(0.0, cooldown - delta)
-	vel.y += gravity * delta
+	var g_mult := 1.0
+	if float_t > 0.0:
+		float_t -= delta
+		g_mult = float_g
+	if slowmo_t > 0.0:
+		slowmo_t -= delta / maxf(Engine.time_scale, 0.1)
+	vel.y += gravity * g_mult * delta
 	var back := Input.is_action_pressed("flip_back")
 	var front := Input.is_action_pressed("flip_front")
 	tucked = Input.is_action_pressed("tuck")
@@ -286,7 +389,7 @@ func _tick_air(delta: float) -> void:
 	# Beginners (low difficulty) get more help; it fades out as difficulty rises.
 	var easy := clampf(1.5 - difficulty, 0.0, 1.0)
 	if flipping:
-		var tgt := air_spin if front else -air_spin
+		var tgt := air_spin * perk_spin if front else -air_spin * perk_spin
 		rot_vel = move_toward(rot_vel, tgt, spin_accel * delta)
 		attempted = true
 	elif extend:
@@ -316,6 +419,13 @@ func _tick_air(delta: float) -> void:
 			rot += nudge
 			flip_accum += nudge
 			rot_vel *= (1.0 - minf(1.0, 2.0 * delta))
+	if level_t > 0.0:
+		level_t -= delta
+		var lg := roundf(rot / TAU) * TAU
+		var ln := (lg - rot) * minf(1.0, 6.0 * delta)
+		rot += ln
+		flip_accum += ln
+		rot_vel *= (1.0 - minf(1.0, 6.0 * delta))
 	# Twist
 	if Input.is_action_pressed("twist"):
 		twist += twist_speed * delta
@@ -358,7 +468,7 @@ func _find_near_bar() -> int:
 	var up := Vector2(sin(rot), -cos(rot))
 	var hands := position + up * hang_length
 	var best := -1
-	var best_d := grab_range
+	var best_d := grab_range * perk_grab + (90.0 if hook_t > 0.0 else 0.0)
 	for i in bars.size():
 		var d := hands.distance_to(bars[i])
 		if d <= best_d:
@@ -408,11 +518,11 @@ func _land(i: int, pt: Vector2) -> void:
 	var on_target := _in_target(pt.x, top)
 	var res := "fall"
 	if cos(rot) > 0.0:
-		if a <= perfect_angle and vy <= perfect_vy and spin <= perfect_spin and on_target:
+		if a <= perfect_angle * perk_land and vy <= perfect_vy and spin <= perfect_spin and on_target:
 			res = "perfect"
-		elif a <= clean_angle and vy <= clean_vy and spin <= clean_spin:
+		elif a <= clean_angle * perk_land and vy <= clean_vy and spin <= clean_spin:
 			res = "clean"
-		elif a <= unstable_angle and vy <= unstable_vy:
+		elif a <= unstable_angle * perk_land and vy <= unstable_vy:
 			res = "unstable"
 	if res == "fall":
 		_fail("bad landing")

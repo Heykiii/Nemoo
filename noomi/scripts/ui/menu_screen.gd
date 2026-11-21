@@ -4,14 +4,18 @@ extends Control
 signal open_levels
 signal start_rush
 signal start_chill
+signal open_train
 
 const UI := preload("res://scripts/core/ui_util.gd")
 const CharacterData := preload("res://scripts/core/character_data.gd")
 const CharPreview := preload("res://scripts/ui/char_preview.gd")
+const CharacterStats := preload("res://scripts/core/character_stats.gd")
 
 var _box: VBoxContainer
 var _page := "main"
 var _btn_size := Vector2(300, 84)
+## Page to open first ("main" or "characters"); set before adding to the tree.
+var start_page := "main"
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -25,11 +29,16 @@ func _ready() -> void:
 	_box = VBoxContainer.new()
 	_box.add_theme_constant_override("separation", 14)
 	cc.add_child(_box)
-	_show_main()
+	if start_page == "characters":
+		_show_characters()
+	else:
+		_show_main()
 
 func on_back() -> void:
 	if _page == "main":
 		get_tree().quit()
+	elif _page == "detail":
+		_show_characters()
 	else:
 		_show_main()
 
@@ -49,17 +58,20 @@ func _btn(text: String, cb: Callable, color: Color = UI.PURPLE, disabled: bool =
 func _show_main() -> void:
 	_page = "main"
 	_clear()
-	_box.add_child(UI.label("NOOMI", 110, UI.LAV))
+	_btn_size = Vector2(360, 60)
+	_box.add_child(UI.label("NOOMI", 80, UI.LAV))
 	_box.add_child(UI.label("Swing. Release. Flip. Stick it.", 28, UI.CYAN))
+	_box.add_child(UI.label("Coins: %d%s" % [int(SaveManager.data["coins"]), "   |   GOLD CHALK FEVER x1.5!" if SaveManager.fever_active() else ""], 26, UI.GOLD))
 	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(0, 12)
+	gap.custom_minimum_size = Vector2(0, 2)
 	_box.add_child(gap)
 	_btn("Play", func(): open_levels.emit(), UI.PURPLE)
+	_btn("Train for Coins", func(): open_train.emit(), UI.GOLD.darkened(0.35))
 	_btn("Modes", _show_modes)
 	_btn("Characters", _show_characters)
 	_btn("Trick Book", _show_book)
 	_btn("Settings", _show_settings)
-	if not OS.has_feature("mobile"):
+	if not OS.has_feature("mobile") and not OS.has_feature("web"):
 		_btn("Quit", func(): get_tree().quit(), UI.PINK)
 
 func _show_modes() -> void:
@@ -76,8 +88,8 @@ func _show_modes() -> void:
 func _show_characters() -> void:
 	_page = "characters"
 	_clear()
-	_box.add_child(UI.label("Choose your character", 42, UI.LAV))
-	_box.add_child(UI.label("Cosmetic only - everyone flips the same.", 20, UI.CYAN))
+	_box.add_child(UI.label("Heroes   -   Coins: %d" % int(SaveManager.data["coins"]), 42, UI.LAV))
+	_box.add_child(UI.label("Tap a hero to see powers. Earn coins by playing and training. Chill Mode: all heroes free.", 20, UI.CYAN))
 	var sc := ScrollContainer.new()
 	sc.custom_minimum_size = Vector2(1180, 456)
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -97,6 +109,7 @@ func _show_characters() -> void:
 func _char_card(i: int) -> Control:
 	var ch: Dictionary = CharacterData.LIST[i]
 	var selected := int(SaveManager.data["character"]) == i
+	var owned := SaveManager.is_owned(String(ch["id"]))
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(186, 222)
 	for st in ["normal", "hover", "pressed", "focus"]:
@@ -109,12 +122,12 @@ func _char_card(i: int) -> Control:
 		b.add_theme_stylebox_override(st, sb)
 	var idx := i
 	b.pressed.connect(func():
-		SaveManager.data["character"] = idx
-		SaveManager.save()
 		AudioManager.play("button")
-		_show_characters())
+		_show_detail(idx))
 	var prev := CharPreview.new()
 	prev.palette = ch
+	if not owned:
+		prev.modulate = Color(0.35, 0.35, 0.45, 0.9)
 	prev.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(prev)
 	prev.anchor_right = 1.0
@@ -129,7 +142,8 @@ func _char_card(i: int) -> Control:
 	nm.anchor_bottom = 1.0
 	nm.offset_top = -60
 	nm.offset_bottom = -34
-	var tg := UI.label(String(ch["tag"]), 14, UI.LAV)
+	var sub := String(ch["tag"]) if owned else ("LOCKED  %d coins" % CharacterStats.cost(String(ch["id"])))
+	var tg := UI.label(sub, 14, UI.LAV if owned else UI.GOLD)
 	tg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	b.add_child(tg)
 	tg.anchor_left = 0.0
@@ -141,6 +155,71 @@ func _char_card(i: int) -> Control:
 	tg.offset_top = -34
 	tg.offset_bottom = -2
 	return b
+
+func _show_detail(i: int) -> void:
+	_page = "detail"
+	_clear()
+	var ch: Dictionary = CharacterData.LIST[i]
+	var id := String(ch["id"])
+	var st := CharacterStats.of(id)
+	var owned := SaveManager.is_owned(id)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 30)
+	_box.add_child(row)
+	var prev := CharPreview.new()
+	prev.palette = ch
+	prev.custom_minimum_size = Vector2(300, 400)
+	if not owned:
+		prev.modulate = Color(0.45, 0.45, 0.55)
+	row.add_child(prev)
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 8)
+	info.custom_minimum_size = Vector2(760, 0)
+	row.add_child(info)
+	var nm := UI.label(String(ch["name"]), 56, UI.LAV)
+	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	info.add_child(nm)
+	var lines := [
+		["%s tier  |  %s" % [CharacterStats.tier_name(id), String(ch["tag"])], 24, UI.CYAN],
+		["Passive: " + String(st["perk"]), 28, Color.WHITE],
+		["Ability: %s - %s" % [st["ability_name"], st["ability_desc"]], 28, UI.GOLD],
+		["One ability per jump. Tap it in the air (key F).", 22, UI.LAV],
+	]
+	for l in lines:
+		var lb := UI.label(String(l[0]), int(l[1]), l[2])
+		lb.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		lb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lb.custom_minimum_size = Vector2(760, 0)
+		info.add_child(lb)
+	var coins := int(SaveManager.data["coins"])
+	var cost := CharacterStats.cost(id)
+	var act := UI.button("", UI.PURPLE, Vector2(520, 76))
+	if owned:
+		if int(SaveManager.data["character"]) == i:
+			act.text = "Selected"
+			act.disabled = true
+		else:
+			act.text = "Select"
+			act.pressed.connect(func():
+				SaveManager.select_character(i)
+				_show_detail(i))
+	elif coins >= cost:
+		act.text = "Unlock for %d coins" % cost
+		act.pressed.connect(func():
+			if SaveManager.buy_character(id):
+				SaveManager.select_character(i)
+			_show_detail(i))
+	else:
+		act.text = "Need %d more coins" % (cost - coins)
+		act.disabled = true
+	info.add_child(act)
+	if not owned:
+		var hint := UI.label("Earn coins: finish levels, Trick Rush, or Train for Coins.", 22, UI.LAV)
+		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		info.add_child(hint)
+	var back_btn := UI.button("Back", UI.PANEL, Vector2(300, 64))
+	back_btn.pressed.connect(_show_characters)
+	info.add_child(back_btn)
 
 func _show_settings() -> void:
 	_page = "settings"

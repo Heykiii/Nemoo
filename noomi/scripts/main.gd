@@ -8,6 +8,7 @@ const ResultsScreen := preload("res://scripts/ui/results_screen.gd")
 const Gameplay := preload("res://scripts/gameplay/gameplay.gd")
 const StoryScreen := preload("res://scripts/ui/story_screen.gd")
 const StoryData := preload("res://scripts/core/story_data.gd")
+const ExerciseScreen := preload("res://scripts/ui/exercise_screen.gd")
 
 var current: Node = null
 
@@ -25,12 +26,19 @@ func _swap(node: Node) -> void:
 	node.process_mode = Node.PROCESS_MODE_PAUSABLE
 	add_child(node)
 
-func _show_menu() -> void:
+func _show_menu(page: String = "main") -> void:
 	var m = MenuScreen.new()
+	m.start_page = page
+	m.open_train.connect(_show_train)
 	m.open_levels.connect(_show_levels)
 	m.start_rush.connect(func(): _start("rush", 0))
 	m.start_chill.connect(func(): _start("chill", 0))
 	_swap(m)
+
+func _show_train() -> void:
+	var t = ExerciseScreen.new()
+	t.back.connect(func(): _show_menu())
+	_swap(t)
 
 func _show_levels() -> void:
 	var s = LevelSelect.new()
@@ -58,7 +66,7 @@ func _start(mode: String, idx: int) -> void:
 	var g = Gameplay.new()
 	g.setup(mode, idx)
 	g.finished.connect(_show_results)
-	g.exit_requested.connect(_show_menu)
+	g.exit_requested.connect(func(): _show_menu())
 	_swap(g)
 
 func _show_results(r: Dictionary) -> void:
@@ -76,7 +84,7 @@ func _present_results(r: Dictionary) -> void:
 	s.setup(r)
 	s.retry.connect(func(): _start(r["mode"], r["level_index"]))
 	s.next.connect(func(): _play_campaign(int(r["level_index"]) + 1))
-	s.menu.connect(_show_menu)
+	s.menu.connect(func(): _show_menu())
 	_swap(s)
 
 func _on_back() -> void:

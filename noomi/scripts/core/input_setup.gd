@@ -12,6 +12,7 @@ static func ensure() -> void:
 		"extend": [KEY_W, KEY_UP],
 		"twist": [KEY_Q],
 		"restart": [KEY_R],
+		"ability": [KEY_F],
 		"pause": [KEY_ESCAPE, KEY_P],
 	}
 	for action in map:

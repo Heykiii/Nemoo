@@ -36,6 +36,8 @@ func _ready() -> void:
 		vb.add_child(UI.label("Stars: %d / 3" % result["stars"], 36, UI.GOLD))
 		vb.add_child(UI.label("Landing: %s" % String(result["landing"]).capitalize(), 30, UI.CYAN))
 	vb.add_child(UI.label("Best combo: %d" % result["best_combo"], 30, UI.CYAN))
+	if int(result.get("coins", 0)) > 0:
+		vb.add_child(UI.label("+%d coins%s" % [int(result["coins"]), "  (Gold Chalk Fever x1.5)" if result.get("fever", false) else ""], 32, UI.GOLD))
 	var names: Array = result["tricks"]
 	vb.add_child(UI.label("Tricks (%d): %s" % [names.size(), ", ".join(names) if not names.is_empty() else "none"], 24, Color.WHITE))
 	var row := HBoxContainer.new()

@@ -41,3 +41,19 @@ Tested: headless Godot 4.3 (`tests/sim_test.tscn`, `ui_test`, `flip_test`, `diff
 
 ## Release build (later)
 Create your own keystore, store it and passwords as GitHub Secrets (never commit them), and switch the export to `--export-release` with an AAB (needs gradle build enabled). Check current Google Play target-SDK rules first.
+
+## Hero powers, coins and training (v3)
+
+- **Heroes** (`scripts/core/character_stats.gd`): each hero has a passive perk and ONE mid-air ability per jump
+  (button bottom-left, key `F`). Tiers and coin prices: Noomi free, Ninja 500, Chef 600, Pirate 1200, Clown 1500,
+  Viking 1800, Scientist 3000, Dino 3500, Robot 4000, Wizard 7500, Astronaut 10000. Edit the table to retune.
+- **Coins** come from levels (10 + 5 per star), Trick Rush (score / 100), training, and a daily Chalk Box (+50).
+  Pirate +20% coins, Wizard +10%.
+- **Chill Mode**: every hero is free to try there (pause menu: change hero). Nothing is unlocked by it.
+- **Train for Coins** (`scripts/ui/exercise_screen.gd`): squats, jumping jacks, plank 30s, push-ups, arm circles.
+  Guided countdown, once per exercise per day. Train 3 days in a row = **Gold Chalk Fever** x1.5 on training and level coins.
+  The game cannot detect real movement: it is an honor-system timer. Warm-up and safety note are shown.
+- **Play in browser**: `.github/workflows/play-web.yml` exports a Web build to GitHub Pages (needs Pages source = GitHub Actions).
+- **Ads**: `scripts/core/ad_service.gd` is a stub. `available()` is false, so no ad buttons are shown and no reward is
+  ever given for a fake ad. To add real rewarded ads you need an AdMob plugin and consent/age settings.
+- Tests: `tests/power_test.tscn` (economy, streak, perks, abilities) plus the older regression scenes.
